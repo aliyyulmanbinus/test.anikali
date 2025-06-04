@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -8,9 +9,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { ArrowLeft, Plus, Edit, Trash2, Save } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { ArrowLeft, Plus, Edit, Trash2, Save, AlertCircle } from "lucide-react"
+import AuthGuard from "@/components/auth-guard"
 
-const samplePackages = [
+const defaultPackages = [
   { id: "A", name: "Paket A - Tes Kepribadian" },
   { id: "B", name: "Paket B - Tes Kecerdasan" },
   { id: "C", name: "Paket C - Tes Minat Bakat" },
@@ -24,7 +27,7 @@ const sampleQuestions = [
     optionB: "Saya lebih suka bekerja sendiri",
     optionC: "Saya fleksibel dalam kedua situasi",
     optionD: "Saya tidak memiliki preferensi khusus",
-    correctAnswer: "A",
+    correctAnswer: "C",
   },
   {
     id: 2,
@@ -37,11 +40,27 @@ const sampleQuestions = [
   },
 ]
 
-export default function ManageQuestionsPage() {
-  const [selectedPackage, setSelectedPackage] = useState("")
-  const [questions, setQuestions] = useState(sampleQuestions)
+interface Question {
+  id: number
+  question: string
+  optionA: string
+  optionB: string
+  optionC: string
+  optionD: string
+  correctAnswer: string
+}
+
+function ManageQuestionsContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const packageParam = searchParams.get("package")
+
+  const [allPackages, setAllPackages] = useState(defaultPackages)
+  const [selectedPackage, setSelectedPackage] = useState(packageParam || "")
+  const [questions, setQuestions] = useState<Question[]>([])
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingQuestion, setEditingQuestion] = useState<number | null>(null)
+  const [error, setError] = useState("")
 
   const [newQuestion, setNewQuestion] = useState({
     question: "",
@@ -52,38 +71,88 @@ export default function ManageQuestionsPage() {
     correctAnswer: "",
   })
 
-  const handleBack = () => {
-    console.log("Back to dashboard")
-  }
+  // Load custom packages and questions on component mount
+  useEffect(() => {
+    const customPackages = JSON.parse(localStorage.getItem("customPackages") || "[]")
+    const customPackageOptions = customPackages.map((pkg: any) => ({
+      id: pkg.id,
+      name: pkg.name,
+    }))
+    setAllPackages([...defaultPackages, ...customPackageOptions])
 
-  const handleAddQuestion = () => {
-    if (
-      newQuestion.question &&
-      newQuestion.optionA &&
-      newQuestion.optionB &&
-      newQuestion.optionC &&
-      newQuestion.optionD &&
-      newQuestion.correctAnswer
-    ) {
-      const question = {
-        id: questions.length + 1,
-        ...newQuestion,
-      }
-      setQuestions((prev) => [...prev, question])
-      setNewQuestion({
-        question: "",
-        optionA: "",
-        optionB: "",
-        optionC: "",
-        optionD: "",
-        correctAnswer: "",
-      })
-      setShowAddForm(false)
+    // Load questions for selected package
+    if (selectedPackage) {
+      loadQuestionsForPackage(selectedPackage)
+    }
+  }, [selectedPackage])
+
+  const loadQuestionsForPackage = (packageId: string) => {
+    // For default packages, use sample questions
+    if (["A", "B", "C"].includes(packageId)) {
+      setQuestions(sampleQuestions)
+    } else {
+      // For custom packages, load from localStorage
+      const customPackages = JSON.parse(localStorage.getItem("customPackages") || "[]")
+      const selectedPkg = customPackages.find((pkg: any) => pkg.id === packageId)
+      setQuestions(selectedPkg?.questions || [])
     }
   }
 
+  const handleBack = () => {
+    router.push("/admin/dashboard")
+  }
+
+  const validateQuestion = () => {
+    if (!newQuestion.question.trim()) {
+      setError("Pertanyaan harus diisi")
+      return false
+    }
+    if (
+      !newQuestion.optionA.trim() ||
+      !newQuestion.optionB.trim() ||
+      !newQuestion.optionC.trim() ||
+      !newQuestion.optionD.trim()
+    ) {
+      setError("Semua pilihan jawaban harus diisi")
+      return false
+    }
+    if (!newQuestion.correctAnswer) {
+      setError("Jawaban benar harus dipilih")
+      return false
+    }
+    return true
+  }
+
+  const handleAddQuestion = () => {
+    if (!validateQuestion()) return
+
+    const question: Question = {
+      id: questions.length + 1,
+      ...newQuestion,
+    }
+
+    const updatedQuestions = [...questions, question]
+    setQuestions(updatedQuestions)
+    saveQuestionsToStorage(selectedPackage, updatedQuestions)
+
+    setNewQuestion({
+      question: "",
+      optionA: "",
+      optionB: "",
+      optionC: "",
+      optionD: "",
+      correctAnswer: "",
+    })
+    setShowAddForm(false)
+    setError("")
+  }
+
   const handleDeleteQuestion = (questionId: number) => {
-    setQuestions((prev) => prev.filter((q) => q.id !== questionId))
+    if (confirm("Apakah Anda yakin ingin menghapus soal ini?")) {
+      const updatedQuestions = questions.filter((q) => q.id !== questionId)
+      setQuestions(updatedQuestions)
+      saveQuestionsToStorage(selectedPackage, updatedQuestions)
+    }
   }
 
   const handleEditQuestion = (questionId: number) => {
@@ -95,8 +164,15 @@ export default function ManageQuestionsPage() {
   }
 
   const handleUpdateQuestion = () => {
+    if (!validateQuestion()) return
+
     if (editingQuestion) {
-      setQuestions((prev) => prev.map((q) => (q.id === editingQuestion ? { ...newQuestion, id: editingQuestion } : q)))
+      const updatedQuestions = questions.map((q) =>
+        q.id === editingQuestion ? { ...newQuestion, id: editingQuestion } : q,
+      )
+      setQuestions(updatedQuestions)
+      saveQuestionsToStorage(selectedPackage, updatedQuestions)
+
       setEditingQuestion(null)
       setNewQuestion({
         question: "",
@@ -106,7 +182,33 @@ export default function ManageQuestionsPage() {
         optionD: "",
         correctAnswer: "",
       })
+      setError("")
     }
+  }
+
+  const saveQuestionsToStorage = (packageId: string, questionsToSave: Question[]) => {
+    // Only save for custom packages
+    if (!["A", "B", "C"].includes(packageId)) {
+      const customPackages = JSON.parse(localStorage.getItem("customPackages") || "[]")
+      const updatedPackages = customPackages.map((pkg: any) =>
+        pkg.id === packageId ? { ...pkg, questions: questionsToSave, questionCount: questionsToSave.length } : pkg,
+      )
+      localStorage.setItem("customPackages", JSON.stringify(updatedPackages))
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setShowAddForm(false)
+    setEditingQuestion(null)
+    setNewQuestion({
+      question: "",
+      optionA: "",
+      optionB: "",
+      optionC: "",
+      optionD: "",
+      correctAnswer: "",
+    })
+    setError("")
   }
 
   return (
@@ -138,7 +240,7 @@ export default function ManageQuestionsPage() {
                 <SelectValue placeholder="Pilih paket soal..." />
               </SelectTrigger>
               <SelectContent>
-                {samplePackages.map((pkg) => (
+                {allPackages.map((pkg) => (
                   <SelectItem key={pkg.id} value={pkg.id}>
                     {pkg.name}
                   </SelectItem>
@@ -172,6 +274,13 @@ export default function ManageQuestionsPage() {
               {(showAddForm || editingQuestion) && (
                 <CardContent>
                   <div className="space-y-4">
+                    {error && (
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>{error}</AlertDescription>
+                      </Alert>
+                    )}
+
                     <div className="space-y-2">
                       <Label htmlFor="question">Pertanyaan *</Label>
                       <Textarea
@@ -249,21 +358,7 @@ export default function ManageQuestionsPage() {
                     </div>
 
                     <div className="flex justify-end space-x-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setShowAddForm(false)
-                          setEditingQuestion(null)
-                          setNewQuestion({
-                            question: "",
-                            optionA: "",
-                            optionB: "",
-                            optionC: "",
-                            optionD: "",
-                            correctAnswer: "",
-                          })
-                        }}
-                      >
+                      <Button variant="outline" onClick={handleCancelEdit}>
                         Batal
                       </Button>
                       <Button onClick={editingQuestion ? handleUpdateQuestion : handleAddQuestion}>
@@ -284,50 +379,56 @@ export default function ManageQuestionsPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {questions.map((question, index) => (
-                    <div key={question.id} className="border rounded-lg p-4">
-                      <div className="flex justify-between items-start mb-3">
-                        <h3 className="font-medium text-sm text-gray-600">Soal {index + 1}</h3>
-                        <div className="flex space-x-2">
-                          <Button variant="outline" size="sm" onClick={() => handleEditQuestion(question.id)}>
-                            <Edit className="w-4 h-4 mr-1" />
-                            Edit
-                          </Button>
-                          <Button variant="destructive" size="sm" onClick={() => handleDeleteQuestion(question.id)}>
-                            <Trash2 className="w-4 h-4 mr-1" />
-                            Hapus
-                          </Button>
-                        </div>
-                      </div>
-
-                      <p className="font-medium mb-3">{question.question}</p>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                        <div
-                          className={`p-2 rounded ${question.correctAnswer === "A" ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}
-                        >
-                          <span className="font-medium">A.</span> {question.optionA}
-                        </div>
-                        <div
-                          className={`p-2 rounded ${question.correctAnswer === "B" ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}
-                        >
-                          <span className="font-medium">B.</span> {question.optionB}
-                        </div>
-                        <div
-                          className={`p-2 rounded ${question.correctAnswer === "C" ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}
-                        >
-                          <span className="font-medium">C.</span> {question.optionC}
-                        </div>
-                        <div
-                          className={`p-2 rounded ${question.correctAnswer === "D" ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}
-                        >
-                          <span className="font-medium">D.</span> {question.optionD}
-                        </div>
-                      </div>
-
-                      <div className="mt-2 text-xs text-green-600">Jawaban benar: {question.correctAnswer}</div>
+                  {questions.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-gray-500">Belum ada soal dalam paket ini</p>
                     </div>
-                  ))}
+                  ) : (
+                    questions.map((question, index) => (
+                      <div key={question.id} className="border rounded-lg p-4">
+                        <div className="flex justify-between items-start mb-3">
+                          <h3 className="font-medium text-sm text-gray-600">Soal {index + 1}</h3>
+                          <div className="flex space-x-2">
+                            <Button variant="outline" size="sm" onClick={() => handleEditQuestion(question.id)}>
+                              <Edit className="w-4 h-4 mr-1" />
+                              Edit
+                            </Button>
+                            <Button variant="destructive" size="sm" onClick={() => handleDeleteQuestion(question.id)}>
+                              <Trash2 className="w-4 h-4 mr-1" />
+                              Hapus
+                            </Button>
+                          </div>
+                        </div>
+
+                        <p className="font-medium mb-3">{question.question}</p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                          <div
+                            className={`p-2 rounded ${question.correctAnswer === "A" ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}
+                          >
+                            <span className="font-medium">A.</span> {question.optionA}
+                          </div>
+                          <div
+                            className={`p-2 rounded ${question.correctAnswer === "B" ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}
+                          >
+                            <span className="font-medium">B.</span> {question.optionB}
+                          </div>
+                          <div
+                            className={`p-2 rounded ${question.correctAnswer === "C" ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}
+                          >
+                            <span className="font-medium">C.</span> {question.optionC}
+                          </div>
+                          <div
+                            className={`p-2 rounded ${question.correctAnswer === "D" ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}
+                          >
+                            <span className="font-medium">D.</span> {question.optionD}
+                          </div>
+                        </div>
+
+                        <div className="mt-2 text-xs text-green-600">Jawaban benar: {question.correctAnswer}</div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -335,5 +436,13 @@ export default function ManageQuestionsPage() {
         )}
       </main>
     </div>
+  )
+}
+
+export default function ManageQuestionsPage() {
+  return (
+    <AuthGuard requiredRole="admin">
+      <ManageQuestionsContent />
+    </AuthGuard>
   )
 }

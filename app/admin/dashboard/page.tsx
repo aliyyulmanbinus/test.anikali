@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -8,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Plus, Search, Eye, Trash2, LogOut, Edit } from "lucide-react"
 import AuthGuard from "@/components/auth-guard"
 
-const samplePackages = [
+const defaultPackages = [
   {
     id: "A",
     name: "Paket A - Tes Kepribadian",
@@ -16,6 +17,7 @@ const samplePackages = [
     questionCount: 25,
     createdAt: "2024-01-15",
     status: "Aktif",
+    isDefault: true,
   },
   {
     id: "B",
@@ -24,6 +26,7 @@ const samplePackages = [
     questionCount: 30,
     createdAt: "2024-01-10",
     status: "Aktif",
+    isDefault: true,
   },
   {
     id: "C",
@@ -32,29 +35,56 @@ const samplePackages = [
     questionCount: 35,
     createdAt: "2024-01-05",
     status: "Draft",
+    isDefault: true,
   },
 ]
 
 function AdminDashboardContent() {
+  const router = useRouter()
   const [searchTerm, setSearchTerm] = useState("")
-  const [packages, setPackages] = useState(samplePackages)
+  const [packages, setPackages] = useState(defaultPackages)
+
+  // Load custom packages from localStorage on component mount
+  useEffect(() => {
+    const customPackages = JSON.parse(localStorage.getItem("customPackages") || "[]")
+    setPackages([...defaultPackages, ...customPackages])
+  }, [])
 
   const handleDeletePackage = (packageId: string) => {
-    setPackages((prev) => prev.filter((pkg) => pkg.id !== packageId))
+    // Don't allow deletion of default packages
+    const packageToDelete = packages.find((pkg) => pkg.id === packageId)
+    if (packageToDelete?.isDefault) {
+      alert("Paket default tidak dapat dihapus")
+      return
+    }
+
+    if (confirm("Apakah Anda yakin ingin menghapus paket ini?")) {
+      // Remove from state
+      const updatedPackages = packages.filter((pkg) => pkg.id !== packageId)
+      setPackages(updatedPackages)
+
+      // Update localStorage (only custom packages)
+      const customPackages = updatedPackages.filter((pkg) => !pkg.isDefault)
+      localStorage.setItem("customPackages", JSON.stringify(customPackages))
+    }
   }
 
   const handleViewQuestions = (packageId: string) => {
-    window.location.href = "/admin/manage-questions"
+    router.push(`/admin/manage-questions?package=${packageId}`)
   }
 
   const handleAddPackage = () => {
-    window.location.href = "/admin/add-package"
+    router.push("/admin/add-package")
+  }
+
+  const handleEditPackage = (packageId: string) => {
+    router.push(`/admin/edit-package?id=${packageId}`)
   }
 
   const handleLogout = async () => {
     try {
       sessionStorage.removeItem("currentUser")
-      window.location.href = "/"
+      router.push("/")
     } catch (error) {
       console.error("Logout error:", error)
     }
@@ -144,35 +174,52 @@ function AdminDashboardContent() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {filteredPackages.map((pkg) => (
-                <div key={pkg.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="font-semibold">{pkg.name}</h3>
-                      <Badge variant={pkg.status === "Aktif" ? "default" : "secondary"}>{pkg.status}</Badge>
-                    </div>
-                    <p className="text-sm text-gray-600 mb-2">{pkg.description}</p>
-                    <div className="flex items-center gap-4 text-xs text-gray-500">
-                      <span>{pkg.questionCount} soal</span>
-                      <span>Dibuat: {pkg.createdAt}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => handleViewQuestions(pkg.id)}>
-                      <Eye className="w-4 h-4 mr-1" />
-                      Lihat Soal
-                    </Button>
-                    <Button variant="outline" size="sm">
-                      <Edit className="w-4 h-4 mr-1" />
-                      Edit
-                    </Button>
-                    <Button variant="destructive" size="sm" onClick={() => handleDeletePackage(pkg.id)}>
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      Hapus
-                    </Button>
-                  </div>
+              {filteredPackages.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">Tidak ada paket yang ditemukan</p>
                 </div>
-              ))}
+              ) : (
+                filteredPackages.map((pkg) => (
+                  <div
+                    key={pkg.id}
+                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50"
+                  >
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h3 className="font-semibold">{pkg.name}</h3>
+                        <Badge variant={pkg.status === "Aktif" ? "default" : "secondary"}>{pkg.status}</Badge>
+                        {pkg.isDefault && <Badge variant="outline">Default</Badge>}
+                      </div>
+                      <p className="text-sm text-gray-600 mb-2">{pkg.description}</p>
+                      <div className="flex items-center gap-4 text-xs text-gray-500">
+                        <span>{pkg.questionCount} soal</span>
+                        <span>Dibuat: {pkg.createdAt}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => handleViewQuestions(pkg.id)}>
+                        <Eye className="w-4 h-4 mr-1" />
+                        Lihat Soal
+                      </Button>
+                      {!pkg.isDefault && (
+                        <Button variant="outline" size="sm" onClick={() => handleEditPackage(pkg.id)}>
+                          <Edit className="w-4 h-4 mr-1" />
+                          Edit
+                        </Button>
+                      )}
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDeletePackage(pkg.id)}
+                        disabled={pkg.isDefault}
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Hapus
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
